@@ -462,7 +462,8 @@ function seleccionarRelevador(nombre) {
 // Cerrar dropdown al hacer click fuera
 document.addEventListener("click", function(e) {
   if (!e.target.closest(".autocomplete-wrapper")) {
-    cerrarDropdown();
+    document.querySelectorAll(".autocomplete-dropdown").forEach(d => d.classList.remove("visible"));
+    highlightedIndex = -1;
   }
 });
 
@@ -519,6 +520,88 @@ function validarProducto(input) {
   }
 }
 
+// ============================================================
+// AUTOCOMPLETE DE PRODUCTOS - Búsqueda por cualquier parte
+// ============================================================
+let prodHighlightIndex = {};
+
+function onProductoInput(input, uid) {
+  input.value = input.value.toUpperCase();
+  const query = input.value.trim();
+  if (query.length < 2) {
+    cerrarDropdownProducto(uid);
+    validarProducto(input);
+    return;
+  }
+  const queryNorm = normalizarTexto(query);
+  const resultados = PRODUCTOS_VALIDOS.filter(p => normalizarTexto(p).includes(queryNorm)).slice(0, 30);
+  mostrarDropdownProducto(uid, resultados, query, input);
+  validarProducto(input);
+}
+
+function onProductoFocus(input, uid) {
+  const query = input.value.trim();
+  if (query.length >= 2) {
+    const queryNorm = normalizarTexto(query);
+    const resultados = PRODUCTOS_VALIDOS.filter(p => normalizarTexto(p).includes(queryNorm)).slice(0, 30);
+    mostrarDropdownProducto(uid, resultados, query, input);
+  }
+}
+
+function mostrarDropdownProducto(uid, resultados, query, input) {
+  const dropdown = document.getElementById('prod-drop-' + uid);
+  prodHighlightIndex[uid] = -1;
+  if (resultados.length === 0) {
+    dropdown.innerHTML = '<div class="autocomplete-no-results">Sin resultados para "' + query + '"</div>';
+  } else {
+    dropdown.innerHTML = resultados.map(p =>
+      '<div class="autocomplete-item" data-valor="' + p.replace(/"/g,'&quot;') + '" onmousedown="seleccionarProducto(this, \'' + uid + '\')">' + resaltarCoincidencia(p, query) + '</div>'
+    ).join('');
+  }
+  dropdown.classList.add('visible');
+}
+
+function cerrarDropdownProducto(uid) {
+  const dropdown = document.getElementById('prod-drop-' + uid);
+  if (dropdown) dropdown.classList.remove('visible');
+  prodHighlightIndex[uid] = -1;
+}
+
+function seleccionarProducto(item, uid) {
+  const valor = item.dataset.valor;
+  const dropdown = document.getElementById('prod-drop-' + uid);
+  const wrapper = dropdown.closest('.autocomplete-wrapper');
+  const input = wrapper.querySelector('.p-prod');
+  input.value = valor;
+  cerrarDropdownProducto(uid);
+  validarProducto(input);
+}
+
+function onProductoKeydown(event, uid) {
+  const dropdown = document.getElementById('prod-drop-' + uid);
+  const items = dropdown.querySelectorAll('.autocomplete-item');
+  if (prodHighlightIndex[uid] === undefined) prodHighlightIndex[uid] = -1;
+
+  if (event.key === 'ArrowDown') {
+    event.preventDefault();
+    prodHighlightIndex[uid] = Math.min(prodHighlightIndex[uid] + 1, items.length - 1);
+    items.forEach((it, i) => it.classList.toggle('highlighted', i === prodHighlightIndex[uid]));
+    if (items[prodHighlightIndex[uid]]) items[prodHighlightIndex[uid]].scrollIntoView({ block: 'nearest' });
+  } else if (event.key === 'ArrowUp') {
+    event.preventDefault();
+    prodHighlightIndex[uid] = Math.max(prodHighlightIndex[uid] - 1, 0);
+    items.forEach((it, i) => it.classList.toggle('highlighted', i === prodHighlightIndex[uid]));
+    if (items[prodHighlightIndex[uid]]) items[prodHighlightIndex[uid]].scrollIntoView({ block: 'nearest' });
+  } else if (event.key === 'Enter') {
+    event.preventDefault();
+    if (prodHighlightIndex[uid] >= 0 && items[prodHighlightIndex[uid]]) {
+      seleccionarProducto(items[prodHighlightIndex[uid]], uid);
+    }
+  } else if (event.key === 'Escape') {
+    cerrarDropdownProducto(uid);
+  }
+}
+
 function toggleOtros(checkbox) {
   const row = checkbox.closest(".producto-row");
   const inputOtros = row.querySelector(".input-otros-especificar");
@@ -556,9 +639,16 @@ function agregarFila(tipo) {
       </div>
     </div>`;
 
+  const uid = Date.now() + Math.random().toString(36).slice(2);
   div.innerHTML = `
     <label>PRODUCTO (SELECCIÓN OBLIGATORIA)</label>
-    <input type="text" list="lista-productos-datalist" class="p-prod" placeholder="BUSCAR PRODUCTO..." oninput="validarProducto(this)" required autocomplete="off">
+    <div class="autocomplete-wrapper">
+      <input type="text" class="p-prod" placeholder="BUSCAR PRODUCTO..." required autocomplete="off"
+        oninput="onProductoInput(this, '${uid}')"
+        onkeydown="onProductoKeydown(event, '${uid}')"
+        onfocus="onProductoFocus(this, '${uid}')">
+      <div class="autocomplete-dropdown" id="prod-drop-${uid}"></div>
+    </div>
     <span class="msg-error">⚠️ DEBE SELECCIONAR UN PRODUCTO DE LA LISTA</span>
     
     <div style="display:flex; flex-direction:column; gap:10px; margin-top:10px;">
