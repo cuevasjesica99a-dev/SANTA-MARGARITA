@@ -22,6 +22,56 @@
     label { font-weight: bold; display: block; margin-top: 20px; color: var(--verde-santa-margarita); font-size: 13px; }
     input, select { width: 100%; padding: 14px; margin-top: 6px; border: 2px solid #e0e0e0; border-radius: 8px; box-sizing: border-box; text-transform: uppercase; font-size: 14px; }
     
+    /* ============================================
+       AUTOCOMPLETE PERSONALIZADO
+       ============================================ */
+    .autocomplete-wrapper { position: relative; }
+    .autocomplete-wrapper input { width: 100%; box-sizing: border-box; }
+    .autocomplete-dropdown {
+      position: absolute;
+      top: 100%;
+      left: 0;
+      right: 0;
+      background: white;
+      border: 2px solid var(--verde-santa-margarita);
+      border-top: none;
+      border-radius: 0 0 10px 10px;
+      max-height: 220px;
+      overflow-y: auto;
+      z-index: 1000;
+      box-shadow: 0 8px 20px rgba(0,77,51,0.15);
+      display: none;
+    }
+    .autocomplete-dropdown.visible { display: block; }
+    .autocomplete-item {
+      padding: 12px 16px;
+      cursor: pointer;
+      font-size: 12px;
+      font-weight: bold;
+      color: #333;
+      border-bottom: 1px solid #f0f0f0;
+      transition: background 0.15s;
+    }
+    .autocomplete-item:last-child { border-bottom: none; }
+    .autocomplete-item:hover, .autocomplete-item.highlighted {
+      background: var(--verde-claro);
+      color: var(--verde-santa-margarita);
+    }
+    .autocomplete-item .match-highlight {
+      background: #c5a05944;
+      color: var(--verde-santa-margarita);
+      font-weight: 900;
+      border-radius: 2px;
+      padding: 0 1px;
+    }
+    .autocomplete-no-results {
+      padding: 12px 16px;
+      font-size: 12px;
+      color: #999;
+      font-style: italic;
+      text-transform: none;
+    }
+
     .p-prod, .p-vendedor { border: 2px solid var(--verde-santa-margarita) !important; background-color: var(--verde-claro); font-weight: bold; }
     .input-error { border: 3px solid var(--rojo-alerta) !important; background-color: #ffebee !important; }
     .msg-error { color: var(--rojo-alerta); font-size: 10px; font-weight: bold; margin-top: 5px; display: none; }
@@ -58,9 +108,21 @@
 
   <form id="formulario">
     <label>NOMBRE DEL RELEVADOR (BUSCAR)</label>
-    <input type="text" id="vendedor" list="lista-relevadores" class="p-vendedor" placeholder="ESCRIBA PARA BUSCAR..." required oninput="actualizarPDV()" autocomplete="off">
-    <datalist id="lista-relevadores">
-      </datalist>
+    <!-- Autocomplete personalizado reemplaza al input + datalist -->
+    <div class="autocomplete-wrapper">
+      <input 
+        type="text" 
+        id="vendedor" 
+        class="p-vendedor" 
+        placeholder="ESCRIBA PARA BUSCAR..." 
+        required 
+        autocomplete="off"
+        oninput="onVendedorInput(this)"
+        onkeydown="onVendedorKeydown(event)"
+        onfocus="onVendedorFocus()"
+      >
+      <div class="autocomplete-dropdown" id="vendedor-dropdown"></div>
+    </div>
 
     <label>PUNTO DE VENTA</label>
     <select id="pdv" required>
@@ -282,32 +344,142 @@ const datosPDV = {
   "VELAZQUEZ FIGUEREDO, TANIA MARIELA": ["SUPERSEIS - ESPAÑA", "SUPERSEIS - LA NEGRITA", "SUPERSEIS - MUNDI MARK", "SUPERMERCADOS STOCK - BERTA", "SUPERMERCADOS STOCK - MALL EXCELSIOR", "SUPERMERCADOS STOCK - OBRERO", "SUPERMERCADOS STOCK - UNICOMPRA", "SUPERSEIS TOTAL"]
 };
 
-// Cargar Datalist de Relevadores
-function cargarListaVendedores() {
-    const list = document.getElementById("lista-relevadores");
-    Object.keys(datosPDV).forEach(v => {
-        let opt = document.createElement("option");
-        opt.value = v;
-        list.appendChild(opt);
-    });
+const todosLosRelevadores = Object.keys(datosPDV);
+
+// ============================================================
+// AUTOCOMPLETE PERSONALIZADO - Búsqueda por cualquier parte
+// ============================================================
+let highlightedIndex = -1;
+
+function normalizarTexto(texto) {
+  // Normalizar tildes y pasar a minúsculas para comparar
+  return texto.toLowerCase()
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "");
 }
-cargarListaVendedores();
+
+function resaltarCoincidencia(nombre, query) {
+  // Resalta la parte del nombre que coincide con el query (case-insensitive, sin tildes)
+  const nombreNorm = normalizarTexto(nombre);
+  const queryNorm = normalizarTexto(query);
+  const idx = nombreNorm.indexOf(queryNorm);
+  if (idx === -1) return nombre;
+  const antes = nombre.substring(0, idx);
+  const coincide = nombre.substring(idx, idx + query.length);
+  const despues = nombre.substring(idx + query.length);
+  return `${antes}<span class="match-highlight">${coincide}</span>${despues}`;
+}
+
+function mostrarDropdown(resultados, query) {
+  const dropdown = document.getElementById("vendedor-dropdown");
+  highlightedIndex = -1;
+
+  if (resultados.length === 0) {
+    dropdown.innerHTML = `<div class="autocomplete-no-results">No se encontraron resultados para "${query}"</div>`;
+  } else {
+    dropdown.innerHTML = resultados.map((nombre, i) =>
+      `<div class="autocomplete-item" data-valor="${nombre}" onmousedown="seleccionarRelevador('${nombre.replace(/'/g,"\\'")}')">
+        ${resaltarCoincidencia(nombre, query)}
+      </div>`
+    ).join("");
+  }
+
+  dropdown.classList.add("visible");
+}
+
+function cerrarDropdown() {
+  document.getElementById("vendedor-dropdown").classList.remove("visible");
+  highlightedIndex = -1;
+}
+
+function onVendedorInput(input) {
+  const query = input.value.trim();
+  input.value = input.value.toUpperCase();
+
+  if (query.length < 2) {
+    cerrarDropdown();
+    actualizarPDV();
+    return;
+  }
+
+  const queryNorm = normalizarTexto(query);
+  const resultados = todosLosRelevadores.filter(nombre =>
+    normalizarTexto(nombre).includes(queryNorm)
+  );
+
+  mostrarDropdown(resultados, query);
+  actualizarPDV();
+}
+
+function onVendedorFocus() {
+  const query = document.getElementById("vendedor").value.trim();
+  if (query.length >= 2) {
+    const queryNorm = normalizarTexto(query);
+    const resultados = todosLosRelevadores.filter(nombre =>
+      normalizarTexto(nombre).includes(queryNorm)
+    );
+    mostrarDropdown(resultados, query);
+  }
+}
+
+function onVendedorKeydown(event) {
+  const dropdown = document.getElementById("vendedor-dropdown");
+  const items = dropdown.querySelectorAll(".autocomplete-item");
+
+  if (event.key === "ArrowDown") {
+    event.preventDefault();
+    highlightedIndex = Math.min(highlightedIndex + 1, items.length - 1);
+    actualizarHighlight(items);
+  } else if (event.key === "ArrowUp") {
+    event.preventDefault();
+    highlightedIndex = Math.max(highlightedIndex - 1, 0);
+    actualizarHighlight(items);
+  } else if (event.key === "Enter") {
+    event.preventDefault();
+    if (highlightedIndex >= 0 && items[highlightedIndex]) {
+      seleccionarRelevador(items[highlightedIndex].dataset.valor);
+    }
+  } else if (event.key === "Escape") {
+    cerrarDropdown();
+  }
+}
+
+function actualizarHighlight(items) {
+  items.forEach((item, i) => {
+    item.classList.toggle("highlighted", i === highlightedIndex);
+  });
+  if (items[highlightedIndex]) {
+    items[highlightedIndex].scrollIntoView({ block: "nearest" });
+  }
+}
+
+function seleccionarRelevador(nombre) {
+  document.getElementById("vendedor").value = nombre;
+  cerrarDropdown();
+  actualizarPDV();
+}
+
+// Cerrar dropdown al hacer click fuera
+document.addEventListener("click", function(e) {
+  if (!e.target.closest(".autocomplete-wrapper")) {
+    cerrarDropdown();
+  }
+});
 
 function actualizarPDV() {
   const relevadorSeleccionado = document.getElementById("vendedor").value;
   const selectPDV = document.getElementById("pdv");
   
-  // Solo limpiar y actualizar si el nombre ingresado existe en la lista
   if (datosPDV[relevadorSeleccionado]) {
-      selectPDV.innerHTML = '<option value="">-- SELECCIONE PDV --</option>';
-      datosPDV[relevadorSeleccionado].forEach(pdv => {
-        let option = document.createElement("option");
-        option.value = pdv;
-        option.textContent = pdv;
-        selectPDV.appendChild(option);
-      });
+    selectPDV.innerHTML = '<option value="">-- SELECCIONE PDV --</option>';
+    datosPDV[relevadorSeleccionado].forEach(pdv => {
+      let option = document.createElement("option");
+      option.value = pdv;
+      option.textContent = pdv;
+      selectPDV.appendChild(option);
+    });
   } else {
-      selectPDV.innerHTML = '<option value="">-- RELEVADOR NO VÁLIDO --</option>';
+    selectPDV.innerHTML = '<option value="">-- RELEVADOR NO VÁLIDO --</option>';
   }
 }
 
@@ -408,10 +580,9 @@ document.getElementById("formulario").onsubmit = function(e) {
     return; 
   }
 
-  // Validar Vendedor
   if (!datosPDV[document.getElementById("vendedor").value]) {
-      alert("POR FAVOR SELECCIONE UN RELEVADOR VÁLIDO DE LA LISTA.");
-      return;
+    alert("POR FAVOR SELECCIONE UN RELEVADOR VÁLIDO DE LA LISTA.");
+    return;
   }
 
   let inputsProductos = document.querySelectorAll(".p-prod");
@@ -441,25 +612,22 @@ document.getElementById("formulario").onsubmit = function(e) {
     averiados: []
   };
 
-  // Recolectar Vencidos
   document.querySelectorAll("#cont-vencidos .producto-row").forEach(r => {
     payload.vencidos.push({ 
-        producto: r.querySelector(".p-prod").value, 
-        extra: r.querySelector(".p-extra").value, 
-        cant: r.querySelector(".p-cant").value 
+      producto: r.querySelector(".p-prod").value, 
+      extra: r.querySelector(".p-extra").value, 
+      cant: r.querySelector(".p-cant").value 
     });
   });
 
-  // Recolectar Próximos
   document.querySelectorAll("#cont-proximos .producto-row").forEach(r => {
     payload.proximos.push({ 
-        producto: r.querySelector(".p-prod").value, 
-        extra: r.querySelector(".p-extra").value, 
-        cant: r.querySelector(".p-cant").value 
+      producto: r.querySelector(".p-prod").value, 
+      extra: r.querySelector(".p-extra").value, 
+      cant: r.querySelector(".p-cant").value 
     });
   });
 
-  // Recolectar Averiguados
   document.querySelectorAll("#cont-averiados .producto-row").forEach(r => {
     let seleccionados = [];
     r.querySelectorAll(".checklist-container input[type='checkbox']:checked").forEach(check => {
@@ -472,15 +640,15 @@ document.getElementById("formulario").onsubmit = function(e) {
     });
 
     if(seleccionados.length === 0) {
-        alert("POR FAVOR SELECCIONE AL MENOS UN TIPO DE AVERÍA.");
-        btn.disabled = false; btn.innerText = "ENVIAR REPORTE";
-        throw "Validación Checklist fallida";
+      alert("POR FAVOR SELECCIONE AL MENOS UN TIPO DE AVERÍA.");
+      btn.disabled = false; btn.innerText = "ENVIAR REPORTE";
+      throw "Validación Checklist fallida";
     }
 
     payload.averiados.push({ 
-        producto: r.querySelector(".p-prod").value, 
-        observacion: seleccionados.join(" | "), 
-        cant: r.querySelector(".p-cant").value 
+      producto: r.querySelector(".p-prod").value, 
+      observacion: seleccionados.join(" | "), 
+      cant: r.querySelector(".p-cant").value 
     });
   });
 
